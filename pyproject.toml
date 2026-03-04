@@ -1,0 +1,39 @@
+[project]
+name = "larrak-audio"
+version = "0.1.0"
+description = "Local audiobook pipeline (Marker + Meilisearch + Qwen TTS)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.24",
+  "pydantic>=2.0",
+  "python-dotenv>=1.0",
+  "torch>=2.0",
+  "transformers>=4.39",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.1", "mypy>=1.0"]
+api = ["fastapi>=0.110", "uvicorn>=0.29"]
+
+[project.scripts]
+larrak-audio = "larrak_audio.cli:main"
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"

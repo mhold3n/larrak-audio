@@ -1,0 +1,111 @@
+Metadata-Version: 2.4
+Name: larrak-audio
+Version: 0.1.0
+Summary: Local audiobook pipeline (Marker + Meilisearch + Qwen TTS)
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: numpy>=1.24
+Requires-Dist: pydantic>=2.0
+Requires-Dist: torch>=2.0
+Requires-Dist: transformers>=4.39
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"
+Requires-Dist: ruff>=0.1; extra == "dev"
+Requires-Dist: mypy>=1.0; extra == "dev"
+Provides-Extra: api
+Requires-Dist: fastapi>=0.110; extra == "api"
+Requires-Dist: uvicorn>=0.29; extra == "api"
+
+# Larrak Audio
+
+Standalone local audiobook pipeline with:
+- Marker PDF extraction
+- Meilisearch indexing
+- Qwen TTS synthesis
+- ffmpeg/ffprobe packaging to chapter MP3 + M4B
+
+## Quick Start (macOS)
+1. Run bootstrap:
+```bash
+./tools/bootstrap_macos.sh
+```
+2. Activate venv:
+```bash
+source .venv/bin/activate
+```
+3. Validate local setup (Marker included):
+```bash
+larrak-audio doctor
+```
+
+## Environment Variables
+- `MARKER_BIN` (default: `marker_single`)
+- `OLLAMA_BASE_URL` (default: `http://127.0.0.1:11434`)
+- `OLLAMA_MODEL_CLEANUP` (default: `qwen2.5:7b-instruct`)
+- `MEILI_URL` (default: `http://127.0.0.1:7700`)
+- `MEILI_MASTER_KEY`
+- `MEILI_KEY_DOC_CHUNKS`
+- `MEILI_KEY_DOC_CHAPTERS`
+- `MEILI_KEY_DOC_ASSETS`
+- `QWEN_TTS_MODEL_ID` (default: `Qwen/Qwen3-TTS-0.6B`)
+- `QWEN_TTS_DEVICE` (default: `mps`)
+- `FFMPEG_BIN` (default: `ffmpeg`)
+- `LARRAK_AUDIO_OUTPUT_ROOT` (default: `outputs/audiobooks`)
+- `LARRAK_AUDIO_QUEUE_DB` (default: `outputs/audiobooks/jobs.sqlite3`)
+
+## Commands
+- `larrak-audio doctor [--skip-services]`
+- `larrak-audio ingest --source <path> --type pdf|md|txt [--marker-extra-arg ...]`
+- `larrak-audio build --source-id <id> --enhance on|off`
+- `larrak-audio run-test-files [--input-dir "test files"] [--glob "*.pdf"] [--recursive] [--enhance on|off] [--marker-extra-arg ...] [--summary-path <path>]`
+- `larrak-audio worker --loop`
+- `larrak-audio search --query "..." --source-id <id>`
+- `larrak-audio serve --host 127.0.0.1 --port 8787`
+
+## Marker Verification
+The `doctor` command validates Marker binary discovery and executable health by running:
+- `<MARKER_BIN> --help`
+
+`ingest` and `build` also enforce Marker readiness before executing.
+
+## Batch Marker Run (`test files`)
+Run ingest + build for all matching files (default: PDFs in `test files`):
+
+```bash
+larrak-audio run-test-files
+```
+
+Override input directory or pattern:
+
+```bash
+larrak-audio run-test-files --input-dir "test files" --glob "*.pdf" --recursive
+```
+
+Pass extra marker args and save summary to an explicit location:
+
+```bash
+larrak-audio run-test-files \
+  --marker-extra-arg=--max_pages \
+  --marker-extra-arg=5 \
+  --summary-path outputs/audiobooks/batch_runs/manual_run.json
+```
+
+Behavior:
+- Processes files in deterministic sorted order.
+- Continues after per-file ingest/build failures.
+- Prints final JSON summary to stdout and writes it to disk.
+- Default summary path: `outputs/audiobooks/batch_runs/test_files_<UTC_TIMESTAMP>.json`.
+- Exit code is `0` only when at least one file is discovered and all files succeed; otherwise `1`.
+
+## REST Endpoints
+- `POST /jobs`
+- `GET /jobs/{job_id}`
+- `GET /jobs/{job_id}/artifacts`
+- `POST /search`
+- `GET /sources/{source_id}`
+
+## Notes
+- Non-text visual references are annotated in narration with:
+  - `See additional materials for visual reference.`
+- TTS is local via Hugging Face Qwen runtime.
+- Initial model download can require internet; inference remains local.
