@@ -65,3 +65,35 @@ def test_marker_parser_maps_assets_to_pages_and_chapters(tmp_path: Path) -> None
     assert chapters[1].page_start == 6
     assert chapters[1].page_end == 9
     assert chapters[1].asset_refs
+
+
+def test_marker_parser_finds_nested_marker_artifacts_from_bundle_root(tmp_path: Path) -> None:
+    marker_root = tmp_path / "marker"
+    artifact_dir = marker_root / "doc"
+    artifact_dir.mkdir(parents=True)
+
+    md_path = marker_root / "source.md"
+    md_path.write_text(
+        "\n".join(
+            [
+                "# Doc",
+                "![](_page_3_Figure_1.jpeg)",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    (artifact_dir / "_page_3_Figure_1.jpeg").write_bytes(b"jpeg")
+    (artifact_dir / "doc_meta.json").write_text(
+        json.dumps({"table_of_contents": [{"title": "Doc", "page_id": 2}]}),
+        encoding="utf-8",
+    )
+
+    assets, chapters = build_assets_and_chapters(md_path, marker_root, source_id="s1")
+
+    assert len(assets) == 1
+    assert assets[0].page_id == 3
+    assert assets[0].file_path == str((artifact_dir / "_page_3_Figure_1.jpeg").resolve())
+    assert len(chapters) == 1
+    assert chapters[0].page_start == 2
+    assert chapters[0].page_end == 3

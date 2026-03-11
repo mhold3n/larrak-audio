@@ -87,3 +87,25 @@ def test_event_queue_updates_status_rows(tmp_path) -> None:
     assert values_failed[1] == "failed"
 
     root.destroy()
+
+
+def test_advanced_search_tool_inserts_selected_clause(tmp_path) -> None:
+    root = _make_root()
+    cfg = AudiobookConfig(
+        output_root=str(tmp_path / "outputs"),
+        queue_db_path=str(tmp_path / "outputs" / "jobs.sqlite3"),
+        annas_secret_key="annas-secret",
+        scopus_api_key="scopus-secret",
+    )
+    app = LarrakGuiApp(root, cfg=cfg)
+
+    app.search_mode_var.set("Advanced")
+    app._on_search_mode_changed()
+    app.advanced_tool_var.set("Author Include")
+    app._on_advanced_tool_selected()
+    app._on_insert_clause()
+
+    assert app.query_var.get() == 'author>="fitzgerald"'
+    assert "author token" in app.advanced_help_var.get()
+
+    root.destroy()

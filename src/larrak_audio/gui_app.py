@@ -9,6 +9,42 @@ from typing import Any
 from .config import AudiobookConfig
 from .gui_controller import AnnasCandidate, GuiController, GuiSettings, QueueItem
 
+ADVANCED_TOOL_PRESETS: dict[str, dict[str, str]] = {
+    "Syntax + Operators": {
+        "snippet": "",
+        "description": (
+            "Use field>=, field=, or field<= with quoted values. "
+            ">= means includes, = means exact, <= means exclude. "
+            "Separate clauses with commas or spaces."
+        ),
+    },
+    "Author Include": {
+        "snippet": 'author>="fitzgerald"',
+        "description": 'Matches records that include this author token.',
+    },
+    "Title Exact": {
+        "snippet": 'title="the great gadsby"',
+        "description": "Targets an exact title phrase.",
+    },
+    "DOI Exact": {
+        "snippet": 'doi="10.1000/xyz"',
+        "description": "Matches a specific DOI.",
+    },
+    "Metadata Include": {
+        "snippet": 'metadata>="great"',
+        "description": "Adds a general include token across metadata.",
+    },
+    "Metadata Exclude": {
+        "snippet": 'metadata<="decaprio"',
+        "description": "Excludes results containing this token.",
+    },
+}
+
+ADVANCED_DEFAULT_HELP = (
+    'Advanced example: author>="fitzgerald", title="the great gadsby", '
+    'metadata>="great", metadata<="decaprio"'
+)
+
 
 class LarrakGuiApp:
     def __init__(
@@ -39,6 +75,7 @@ class LarrakGuiApp:
         self._mapping_in_progress = False
 
         self._build_ui()
+        self._refresh_search_mode_controls()
         self._refresh_key_warnings()
         self.root.after(100, self._poll_events)
 
@@ -56,15 +93,58 @@ class LarrakGuiApp:
         search_frame = ttk.LabelFrame(main, text="Search")
         search_frame.pack(fill=tk.X, pady=(0, 8))
 
+        top_row = ttk.Frame(search_frame)
+        top_row.pack(fill=tk.X, padx=8, pady=(8, 4))
+
         self.query_var = tk.StringVar(value="")
-        ttk.Label(search_frame, text="Query").pack(side=tk.LEFT, padx=(8, 4), pady=8)
-        self.query_entry = ttk.Entry(search_frame, textvariable=self.query_var)
-        self.query_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8), pady=8)
-        self.search_btn = ttk.Button(search_frame, text="Search", command=self._on_search)
-        self.search_btn.pack(side=tk.LEFT, padx=(0, 8), pady=8)
+        ttk.Label(top_row, text="Query").pack(side=tk.LEFT, padx=(0, 4))
+        self.query_entry = ttk.Entry(top_row, textvariable=self.query_var)
+        self.query_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
+
+        self.search_mode_var = tk.StringVar(value="Basic")
+        ttk.Label(top_row, text="Mode").pack(side=tk.LEFT, padx=(0, 4))
+        self.search_mode_combo = ttk.Combobox(
+            top_row,
+            textvariable=self.search_mode_var,
+            values=("Basic", "Advanced"),
+            state="readonly",
+            width=10,
+        )
+        self.search_mode_combo.pack(side=tk.LEFT, padx=(0, 8))
+        self.search_mode_combo.bind("<<ComboboxSelected>>", self._on_search_mode_changed)
+
+        self.search_btn = ttk.Button(top_row, text="Search", command=self._on_search)
+        self.search_btn.pack(side=tk.LEFT, padx=(0, 8))
 
         self.search_status_var = tk.StringVar(value="Idle")
-        ttk.Label(search_frame, textvariable=self.search_status_var).pack(side=tk.LEFT, padx=(0, 8), pady=8)
+        ttk.Label(top_row, textvariable=self.search_status_var).pack(side=tk.LEFT, padx=(0, 8))
+
+        advanced_row = ttk.Frame(search_frame)
+        advanced_row.pack(fill=tk.X, padx=8, pady=(0, 8))
+
+        self.advanced_tool_var = tk.StringVar(value="Syntax + Operators")
+        ttk.Label(advanced_row, text="Advanced Tool").pack(side=tk.LEFT, padx=(0, 4))
+        self.advanced_tool_combo = ttk.Combobox(
+            advanced_row,
+            textvariable=self.advanced_tool_var,
+            values=tuple(ADVANCED_TOOL_PRESETS.keys()),
+            state="readonly",
+            width=24,
+        )
+        self.advanced_tool_combo.pack(side=tk.LEFT, padx=(0, 6))
+        self.advanced_tool_combo.bind("<<ComboboxSelected>>", self._on_advanced_tool_selected)
+
+        self.insert_clause_btn = ttk.Button(advanced_row, text="Insert Clause", command=self._on_insert_clause)
+        self.insert_clause_btn.pack(side=tk.LEFT, padx=(0, 8))
+
+        self.advanced_help_var = tk.StringVar(value=ADVANCED_DEFAULT_HELP)
+        self.advanced_help_label = ttk.Label(
+            advanced_row,
+            textvariable=self.advanced_help_var,
+            justify=tk.LEFT,
+            wraplength=800,
+        )
+        self.advanced_help_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         results_frame = ttk.Frame(main)
         results_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
@@ -195,6 +275,46 @@ class LarrakGuiApp:
         self.add_annas_btn.configure(state=(tk.NORMAL if has_annas else tk.DISABLED))
         self.add_scopus_btn.configure(state=(tk.NORMAL if (has_annas and has_scopus) else tk.DISABLED))
 
+    def _is_advanced_mode(self) -> bool:
+        return str(self.search_mode_var.get() or "").strip().lower() == "advanced"
+
+    def _refresh_search_mode_controls(self) -> None:
+        if self._is_advanced_mode():
+            self.advanced_tool_combo.configure(state="readonly")
+            self.insert_clause_btn.configure(state=tk.NORMAL)
+            selected = ADVANCED_TOOL_PRESETS.get(str(self.advanced_tool_var.get()))
+            self.advanced_help_var.set((selected or {}).get("description", ADVANCED_DEFAULT_HELP))
+            return
+        self.advanced_tool_combo.configure(state=tk.DISABLED)
+        self.insert_clause_btn.configure(state=tk.DISABLED)
+        self.advanced_help_var.set(
+            "Switch Mode to Advanced to use field filters (author, title, doi, metadata, etc.)."
+        )
+
+    def _on_search_mode_changed(self, _event: tk.Event[Any] | None = None) -> None:
+        self._refresh_search_mode_controls()
+
+    def _on_advanced_tool_selected(self, _event: tk.Event[Any] | None = None) -> None:
+        selected = ADVANCED_TOOL_PRESETS.get(str(self.advanced_tool_var.get()))
+        self.advanced_help_var.set((selected or {}).get("description", ADVANCED_DEFAULT_HELP))
+
+    def _on_insert_clause(self) -> None:
+        if not self._is_advanced_mode():
+            return
+        selected = ADVANCED_TOOL_PRESETS.get(str(self.advanced_tool_var.get()))
+        snippet = str((selected or {}).get("snippet") or "").strip()
+        if not snippet:
+            return
+        current = self.query_var.get().strip()
+        if not current:
+            self.query_var.set(snippet)
+        elif current.endswith(","):
+            self.query_var.set(f"{current} {snippet}")
+        else:
+            self.query_var.set(f"{current}, {snippet}")
+        self.query_entry.icursor(tk.END)
+        self.query_entry.focus_set()
+
     def _on_search(self) -> None:
         query = self.query_var.get().strip()
         if not query:
@@ -202,18 +322,19 @@ class LarrakGuiApp:
             return
 
         self._last_query = query
+        search_mode = "advanced" if self._is_advanced_mode() else "basic"
         self.search_btn.configure(state=tk.DISABLED)
         self.search_status_var.set("Searching...")
         self._clear_search_results()
 
-        threading.Thread(target=self._search_worker, args=(query,), daemon=True).start()
+        threading.Thread(target=self._search_worker, args=(query, search_mode), daemon=True).start()
 
-    def _search_worker(self, query: str) -> None:
+    def _search_worker(self, query: str, search_mode: str) -> None:
         try:
-            bundle = self.controller.search_all(query=query, settings=self.settings)
-            self._ui_events.put({"type": "search_done", "query": query, "bundle": bundle})
+            bundle = self.controller.search_all(query=query, settings=self.settings, search_mode=search_mode)
+            self._ui_events.put({"type": "search_done", "query": query, "search_mode": search_mode, "bundle": bundle})
         except Exception as exc:
-            self._ui_events.put({"type": "search_error", "query": query, "error": str(exc)})
+            self._ui_events.put({"type": "search_error", "query": query, "search_mode": search_mode, "error": str(exc)})
 
     def _clear_search_results(self) -> None:
         self._annas_rows.clear()
@@ -353,12 +474,16 @@ class LarrakGuiApp:
     def _set_busy_state(self, busy: bool) -> None:
         state = tk.DISABLED if busy else tk.NORMAL
         self.search_btn.configure(state=state)
+        self.search_mode_combo.configure(state=(tk.DISABLED if busy else "readonly"))
         self.add_annas_btn.configure(state=state)
         self.add_scopus_btn.configure(state=state)
         self.remove_btn.configure(state=state)
         self.clear_btn.configure(state=state)
         self.download_btn.configure(state=state)
+        self.insert_clause_btn.configure(state=state)
+        self.advanced_tool_combo.configure(state=state)
         if not busy:
+            self._refresh_search_mode_controls()
             self._refresh_key_warnings()
 
     def _log(self, message: str) -> None:
@@ -383,7 +508,8 @@ class LarrakGuiApp:
         event_type = str(event.get("type", ""))
         if event_type == "search_done":
             self.search_btn.configure(state=tk.NORMAL)
-            self.search_status_var.set("Search complete")
+            mode = str(event.get("search_mode") or "basic")
+            self.search_status_var.set(f"Search complete ({mode})")
             bundle = event["bundle"]
             self._populate_annas_results(bundle.annas_results)
             self._populate_scopus_results(bundle.scopus_results)
@@ -393,7 +519,8 @@ class LarrakGuiApp:
 
         if event_type == "search_error":
             self.search_btn.configure(state=tk.NORMAL)
-            self.search_status_var.set("Search failed")
+            mode = str(event.get("search_mode") or "basic")
+            self.search_status_var.set(f"Search failed ({mode})")
             self._log(f"Search failed: {event.get('error')}")
             return
 

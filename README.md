@@ -230,6 +230,12 @@ larrak-audio gui \
 
 GUI behavior:
 - Searches Anna's and Scopus from one query.
+- Supports `Basic` and `Advanced` search modes in the GUI:
+  - Advanced syntax: `field>="value"`, `field="value"`, `field<="value"`
+  - `>=` include, `=` exact, `<=` exclude
+  - Combine clauses with commas or spaces
+  - Example: `author>="fitzgerald", title="the great gadsby", metadata>="great", metadata<="decaprio"`
+  - Supported fields: `author`, `title`, `doi`, `metadata`, `abstract`, `keyword`, `journal`
 - Shows separate result tables for each source API.
 - Lets you add Anna's results directly to a queue.
 - For Scopus results, requires manual mapping to an Anna's candidate before queueing.

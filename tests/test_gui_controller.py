@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 import larrak_audio.gui_controller as gui_controller
 from larrak_audio.config import AudiobookConfig
 from larrak_audio.gui_controller import AnnasCandidate, GuiController, GuiSettings
@@ -58,6 +60,58 @@ def test_search_all_aggregates_annas_and_scopus(tmp_path: Path, monkeypatch) -> 
     assert {row.annas_kind for row in bundle.annas_results} == {"book", "article"}
     assert len(bundle.scopus_results) == 1
     assert bundle.scopus_results[0]["scopus_id"] == "123"
+
+
+def test_search_all_advanced_builds_provider_queries(tmp_path: Path, monkeypatch) -> None:
+    cfg = _make_cfg(tmp_path)
+    controller = GuiController(cfg)
+
+    annas_queries: list[str] = []
+    scopus_queries: list[str] = []
+
+    def fake_annas_search(*, cfg, kind, query, min_download_size_bytes):
+        _ = cfg, kind, min_download_size_bytes
+        annas_queries.append(str(query))
+        return {"candidates": []}
+
+    def fake_scopus_search(*, cfg, query, count, sort):
+        _ = cfg, count, sort
+        scopus_queries.append(str(query))
+        return {"results": []}
+
+    monkeypatch.setattr(gui_controller, "run_annas_search", fake_annas_search)
+    monkeypatch.setattr(gui_controller, "run_scopus_search", fake_scopus_search)
+
+    controller.search_all(
+        'author>="fitzgerald", title="the great gadsby", metadata>="great", metadata<="decaprio"',
+        GuiSettings(),
+        search_mode="advanced",
+    )
+
+    assert annas_queries == [
+        'author:"fitzgerald" title:"the great gadsby" "great" -"decaprio"',
+        'author:"fitzgerald" title:"the great gadsby" "great" -"decaprio"',
+    ]
+    assert scopus_queries == [
+        'AUTH("fitzgerald") AND TITLE("the great gadsby") AND ALL("great") AND NOT (ALL("decaprio"))'
+    ]
+
+
+def test_advanced_parser_accepts_space_delimited_clauses() -> None:
+    clauses = gui_controller._parse_advanced_search_clauses(
+        'author>="fitzgerald" title="the great gadsby" metadata>="great" metadata<="decaprio"'
+    )
+    assert [(item.field, item.op, item.value) for item in clauses] == [
+        ("author", ">=", "fitzgerald"),
+        ("title", "=", "the great gadsby"),
+        ("metadata", ">=", "great"),
+        ("metadata", "<=", "decaprio"),
+    ]
+
+
+def test_advanced_parser_rejects_unknown_field() -> None:
+    with pytest.raises(ValueError, match="unsupported advanced-search field"):
+        gui_controller._parse_advanced_search_clauses('isbn="1234567890"')
 
 
 def test_enqueue_annas_candidate_deduplicates(tmp_path: Path) -> None:

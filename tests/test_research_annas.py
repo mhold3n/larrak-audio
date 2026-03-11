@@ -23,7 +23,7 @@ def _make_manifest(tmp_path: Path, source_path: Path, source_id: str) -> SourceM
         source_path=str(source_path),
         source_type="pdf",
         output_root=str(marker_dir),
-        marker_output_dir=str(marker_dir / "marker"),
+        marker_output_dir=str(marker_dir),
         markdown_path=str(source_md),
         chapter_count=0,
         assets_manifest_path=str(assets_path),

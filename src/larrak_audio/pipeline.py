@@ -197,11 +197,36 @@ def _normalize_manifest_paths(data: dict[str, Any], *, manifest_path: Path, cfg:
     marker_output_raw = str(row.get("marker_output_dir", "") or "")
     marker_output = Path(marker_output_raw).expanduser() if marker_output_raw else None
     if marker_output is None or not marker_output.exists():
-        fallback_marker_output = marker_dir / "marker"
-        if fallback_marker_output.exists():
-            row["marker_output_dir"] = str(fallback_marker_output)
+        row["marker_output_dir"] = str(_resolve_marker_output_dir(marker_dir, source_path=row.get("source_path", "")))
 
     return row
+
+
+def _resolve_marker_output_dir(marker_dir: Path, source_path: Any) -> Path:
+    preferred_stem = Path(str(source_path or "")).expanduser().stem
+    for candidate in (marker_dir / "marker", marker_dir):
+        if not candidate.exists():
+            continue
+        return _detect_marker_artifact_dir(candidate, preferred_stem)
+    return marker_dir.resolve()
+
+
+def _detect_marker_artifact_dir(root: Path, preferred_stem: str) -> Path:
+    canonical_md = (root / "source.md").resolve()
+    markdown_candidates = sorted(path.resolve() for path in root.rglob("*.md"))
+
+    if preferred_stem:
+        for candidate in markdown_candidates:
+            if candidate.stem == preferred_stem:
+                return candidate.parent
+        for candidate in markdown_candidates:
+            if preferred_stem in candidate.stem:
+                return candidate.parent
+
+    for candidate in markdown_candidates:
+        if candidate != canonical_md:
+            return candidate.parent
+    return root.resolve()
 
 
 def load_assets(source: SourceManifest) -> list[AssetRef]:

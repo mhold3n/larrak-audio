@@ -48,7 +48,7 @@ def _ingest_pdf(
     cfg: AudiobookConfig,
     marker_extra_args: list[str],
 ) -> MarkerIngestResult:
-    marker_output = output_dir / "marker"
+    marker_output = output_dir
     marker_output.mkdir(parents=True, exist_ok=True)
 
     commands = _build_marker_commands(
@@ -67,8 +67,9 @@ def _ingest_pdf(
         if proc.returncode == 0:
             md_path = _find_markdown_file(marker_output, source_path.stem)
             canonical_md = output_dir / "source.md"
-            shutil.copy2(md_path, canonical_md)
-            return MarkerIngestResult(markdown_path=canonical_md, marker_output_dir=marker_output)
+            if md_path.resolve() != canonical_md.resolve():
+                shutil.copy2(md_path, canonical_md)
+            return MarkerIngestResult(markdown_path=canonical_md, marker_output_dir=md_path.parent.resolve())
         detail = proc.stderr.strip() or proc.stdout.strip() or f"exit={proc.returncode}"
         attempt_errors.append(f"{_format_command(cmd)} -> {_truncate_error(detail)}")
 

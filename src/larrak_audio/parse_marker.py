@@ -90,41 +90,36 @@ def _extract_asset_paths(markdown: str) -> list[str]:
 
 
 def _extract_assets_from_blocks(marker_output_dir: Path) -> list[tuple[str, int | None]]:
-    blocks_path = marker_output_dir / "blocks.json"
-    if not blocks_path.exists():
-        return []
-
-    try:
-        data = read_json(blocks_path)
-    except Exception:
-        return []
-
-    if not isinstance(data, list):
-        return []
-
     out: list[tuple[str, int | None]] = []
     visual_types = {"11", "14", "15", "16", "18", "20"}
-    for row in data:
-        if not isinstance(row, dict):
+    for blocks_path in sorted(marker_output_dir.rglob("blocks.json")):
+        try:
+            data = read_json(blocks_path)
+        except Exception:
             continue
-        block_type = str(row.get("block_type", ""))
-        if block_type not in visual_types:
+        if not isinstance(data, list):
             continue
+        for row in data:
+            if not isinstance(row, dict):
+                continue
+            block_type = str(row.get("block_type", ""))
+            if block_type not in visual_types:
+                continue
 
-        page_id_raw = row.get("page_id")
-        page_id = int(page_id_raw) if isinstance(page_id_raw, int) else None
+            page_id_raw = row.get("page_id")
+            page_id = int(page_id_raw) if isinstance(page_id_raw, int) else None
 
-        path = None
-        for key in ("highres_image", "lowres_image"):
-            val = row.get(key)
-            if isinstance(val, str) and val.strip():
-                path = val.strip()
-                break
+            path = None
+            for key in ("highres_image", "lowres_image"):
+                val = row.get(key)
+                if isinstance(val, str) and val.strip():
+                    path = val.strip()
+                    break
 
-        if path is None:
-            block_id = row.get("block_id", "x")
-            path = f"blocks.json#page_{page_id if page_id is not None else 'x'}_block_{block_id}"
-        out.append((path, page_id))
+            if path is None:
+                block_id = row.get("block_id", "x")
+                path = f"blocks.json#page_{page_id if page_id is not None else 'x'}_block_{block_id}"
+            out.append((path, page_id))
 
     return out
 
@@ -166,7 +161,7 @@ def _split_markdown_into_chapters(markdown: str) -> list[tuple[str, str, str]]:
 
 
 def _load_toc_page_map(marker_output_dir: Path) -> dict[str, int]:
-    meta_candidates = sorted(marker_output_dir.glob("*_meta.json"))
+    meta_candidates = sorted(marker_output_dir.rglob("*_meta.json"))
     if not meta_candidates:
         return {}
 

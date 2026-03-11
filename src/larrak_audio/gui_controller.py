@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,6 +54,66 @@ class SearchBundle:
     errors: dict[str, str]
 
 
+@dataclass(frozen=True)
+class SearchClause:
+    field: str
+    op: str
+    value: str
+
+
+@dataclass(frozen=True)
+class PreparedSearchQueries:
+    mode: str
+    raw_query: str
+    annas_query: str
+    scopus_query: str
+    clauses: tuple[SearchClause, ...] = ()
+
+
+_ADVANCED_CLAUSE_RE = re.compile(
+    r"""
+    (?P<field>[A-Za-z_][A-Za-z0-9_]*)
+    \s*
+    (?P<op>>=|<=|=)
+    \s*
+    (?:
+        "(?P<dq>(?:\\.|[^"\\])*)"
+        |
+        '(?P<sq>(?:\\.|[^'\\])*)'
+        |
+        (?P<bare>[^,\s]+)
+    )
+    """,
+    re.VERBOSE,
+)
+
+_ADVANCED_FIELD_ALIASES = {
+    "author": "author",
+    "authors": "author",
+    "creator": "author",
+    "title": "title",
+    "doi": "doi",
+    "metadata": "metadata",
+    "meta": "metadata",
+    "abstract": "abstract",
+    "keyword": "keyword",
+    "keywords": "keyword",
+    "journal": "journal",
+    "publication": "journal",
+    "source": "journal",
+}
+
+_SCOPUS_FIELD_TAGS = {
+    "author": "AUTH",
+    "title": "TITLE",
+    "doi": "DOI",
+    "metadata": "ALL",
+    "abstract": "ABS",
+    "keyword": "KEY",
+    "journal": "SRCTITLE",
+}
+
+
 class GuiController:
     def __init__(self, cfg: AudiobookConfig) -> None:
         self.cfg = cfg
@@ -75,10 +136,11 @@ class GuiController:
             for item in self._queue_items
         ]
 
-    def search_all(self, query: str, settings: GuiSettings) -> SearchBundle:
+    def search_all(self, query: str, settings: GuiSettings, *, search_mode: str = "basic") -> SearchBundle:
         text = query.strip()
         if not text:
             raise ValueError("query is required")
+        prepared = _prepare_search_queries(query=text, search_mode=search_mode)
 
         annas_results: list[AnnasCandidate] = []
         scopus_results: list[dict[str, Any]] = []
@@ -92,7 +154,7 @@ class GuiController:
                     payload = run_annas_search(
                         cfg=self.cfg,
                         kind=kind,
-                        query=text,
+                        query=prepared.annas_query,
                         min_download_size_bytes=min_download_size_bytes,
                     )
                 except Exception as exc:
@@ -100,7 +162,11 @@ class GuiController:
                     continue
 
                 for row in payload.get("candidates", []):
-                    candidate = _candidate_from_annas_row(row=row, fallback_kind=kind, query_context=text)
+                    candidate = _candidate_from_annas_row(
+                        row=row,
+                        fallback_kind=kind,
+                        query_context=prepared.raw_query,
+                    )
                     dedupe_key = (candidate.annas_kind, candidate.annas_hash)
                     if dedupe_key in seen_keys:
                         continue
@@ -113,7 +179,7 @@ class GuiController:
             try:
                 scopus_payload = run_scopus_search(
                     cfg=self.cfg,
-                    query=text,
+                    query=prepared.scopus_query,
                     count=25,
                     sort="relevancy",
                 )
@@ -319,6 +385,138 @@ class GuiController:
         write_json(summary_path, summary)
         cb({"type": "batch_finished", "summary_path": str(summary_path), "exit_code": summary["exit_code"]})
         return summary
+
+
+def _prepare_search_queries(query: str, search_mode: str) -> PreparedSearchQueries:
+    mode = str(search_mode or "basic").strip().lower()
+    if mode in {"", "basic"}:
+        return PreparedSearchQueries(
+            mode="basic",
+            raw_query=query,
+            annas_query=query,
+            scopus_query=query,
+            clauses=(),
+        )
+
+    if mode != "advanced":
+        raise ValueError(f"unsupported search mode: {search_mode}")
+
+    clauses = _parse_advanced_search_clauses(query)
+    annas_query = _build_annas_advanced_query(clauses)
+    scopus_query = _build_scopus_advanced_query(clauses)
+    return PreparedSearchQueries(
+        mode="advanced",
+        raw_query=query,
+        annas_query=annas_query,
+        scopus_query=scopus_query,
+        clauses=tuple(clauses),
+    )
+
+
+def _parse_advanced_search_clauses(query: str) -> list[SearchClause]:
+    matches = list(_ADVANCED_CLAUSE_RE.finditer(query))
+    if not matches:
+        raise ValueError(
+            "advanced search requires clauses like field>=\"value\", field=\"value\", or field<=\"value\""
+        )
+
+    clauses: list[SearchClause] = []
+    cursor = 0
+    for match in matches:
+        separator = query[cursor : match.start()]
+        if not _is_clause_separator(separator):
+            raise ValueError(
+                "invalid advanced-search separator. Use commas and/or spaces between clauses."
+            )
+
+        field_raw = str(match.group("field") or "").strip().lower()
+        field = _ADVANCED_FIELD_ALIASES.get(field_raw)
+        if field is None:
+            known = ", ".join(sorted(_ADVANCED_FIELD_ALIASES))
+            raise ValueError(f"unsupported advanced-search field '{field_raw}'. Supported fields: {known}")
+
+        value = _extract_clause_value(match)
+        if not value:
+            raise ValueError(f"advanced-search field '{field_raw}' has an empty value")
+
+        clauses.append(SearchClause(field=field, op=str(match.group("op")), value=value))
+        cursor = match.end()
+
+    tail = query[cursor:]
+    if not _is_clause_separator(tail):
+        raise ValueError("invalid trailing text in advanced search query")
+    return clauses
+
+
+def _extract_clause_value(match: re.Match[str]) -> str:
+    if match.group("dq") is not None:
+        raw = str(match.group("dq"))
+    elif match.group("sq") is not None:
+        raw = str(match.group("sq"))
+    else:
+        raw = str(match.group("bare") or "")
+    text = re.sub(r"\\(.)", r"\1", raw).strip()
+    return text
+
+
+def _is_clause_separator(text: str) -> bool:
+    return all(ch in {" ", "\t", "\r", "\n", ","} for ch in text)
+
+
+def _build_annas_advanced_query(clauses: list[SearchClause]) -> str:
+    tokens: list[str] = []
+    for clause in clauses:
+        term = _annas_term_for_clause(clause)
+        if clause.op == "<=":
+            tokens.append(f"-{term}")
+            continue
+        tokens.append(term)
+
+    query = " ".join(tokens).strip()
+    if not query:
+        raise ValueError("advanced search query did not produce any Anna's query terms")
+    return query
+
+
+def _annas_term_for_clause(clause: SearchClause) -> str:
+    if clause.field == "metadata":
+        return _quote(clause.value)
+    if clause.field == "doi":
+        return f"doi:{_quote(clause.value)}"
+    return f"{clause.field}:{_quote(clause.value)}"
+
+
+def _build_scopus_advanced_query(clauses: list[SearchClause]) -> str:
+    positive: list[str] = []
+    negative: list[str] = []
+    for clause in clauses:
+        expression = _scopus_expression_for_clause(clause)
+        if clause.op == "<=":
+            negative.append(expression)
+            continue
+        positive.append(expression)
+
+    if not positive:
+        raise ValueError("advanced search requires at least one include/exact clause (>= or =)")
+
+    query = " AND ".join(positive)
+    if negative:
+        query = f"{query} AND NOT ({' OR '.join(negative)})"
+    return query
+
+
+def _scopus_expression_for_clause(clause: SearchClause) -> str:
+    tag = _SCOPUS_FIELD_TAGS.get(clause.field, "ALL")
+    return f'{tag}("{_escape_scopus(clause.value)}")'
+
+
+def _quote(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def _escape_scopus(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
 def _candidate_from_annas_row(row: dict[str, Any], fallback_kind: str, query_context: str) -> AnnasCandidate:
